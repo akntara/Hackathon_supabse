@@ -8,5 +8,8 @@ export function explainSchemaError(message: string) {
   ) {
     return `Run ${MIGRATION} in the Supabase SQL editor, then refresh. That adds topic embeddings and the similarity threshold.`;
   }
+  if (/apply_topic_clusters/.test(message) && /schema cache|does not exist|Could not find/i.test(message)) {
+    return "Run supabase/migrations/20261003170000_apply_topic_clusters.sql in the Supabase SQL editor, then try again.";
+  }
   return message;
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { mergeDuplicateTopics } from "@/lib/topic-groups";
 import type { PublicEvent, QuestionGroupRow, QuestionRow } from "@/lib/types";
 
 export type ConnectionState = "connecting" | "live" | "offline";
@@ -16,7 +17,6 @@ type Options<TEvent extends PublicEvent> = {
   /**
    * Organizers keep hidden questions in their list. Attendees drop them
    * when the organizer broadcasts a removal (RLS suppresses the UPDATE).
-   * Organizers also subscribe to topic groups.
    */
   isOrganizer?: boolean;
 };
@@ -47,24 +47,22 @@ export function useLiveEvent<TEvent extends PublicEvent = PublicEvent>({
       .order("created_at", { ascending: false })
       .limit(1000);
     const eventQuery = supabase.from("events").select("*").eq("id", initialEvent.id).maybeSingle();
-    const groupsQuery = isOrganizer
-      ? supabase
-          .from("question_groups")
-          .select("*")
-          .eq("event_id", initialEvent.id)
-          .order("created_at", { ascending: true })
-      : null;
+    const groupsQuery = supabase
+      .from("question_groups")
+      .select("*")
+      .eq("event_id", initialEvent.id)
+      .order("created_at", { ascending: true });
 
     const [{ data: q }, { data: e }, groupsResult] = await Promise.all([
       questionsQuery,
       eventQuery,
-      groupsQuery ?? Promise.resolve({ data: null }),
+      groupsQuery,
     ]);
     if (q) setQuestions(q);
     if (e) setEvent(e as unknown as TEvent);
     if (groupsResult.data) setGroups(groupsResult.data);
     setLoading(false);
-  }, [supabase, initialEvent.id, isOrganizer]);
+  }, [supabase, initialEvent.id]);
 
   const upsert = useCallback((row: QuestionRow) => {
     setQuestions((prev) => {
@@ -135,7 +133,7 @@ export function useLiveEvent<TEvent extends PublicEvent = PublicEvent>({
         if (!isOrganizer && payload?.id) remove(payload.id as string);
       });
 
-    if (isOrganizer) {
+    {
       channel = channel.on(
         "postgres_changes",
         {
@@ -185,11 +183,13 @@ export function useLiveEvent<TEvent extends PublicEvent = PublicEvent>({
     });
   }, []);
 
+  const merged = useMemo(() => mergeDuplicateTopics(questions, groups), [questions, groups]);
+
   return {
     event,
     setEvent,
-    questions,
-    groups,
+    questions: merged.questions,
+    groups: merged.groups,
     loading,
     connection,
     upsert,

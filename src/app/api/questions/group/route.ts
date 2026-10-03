@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { embedQuestion, topicLabel, toVectorLiteral } from "@/lib/openai";
+import { embedQuestion, topicLabel, topicsWithExamples, toVectorLiteral } from "@/lib/openai";
 import { createClient } from "@/lib/supabase/server";
 
 export async function POST(request: Request) {
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
 
   const { data: question, error: readError } = await supabase
     .from("questions")
-    .select("id, body, group_id")
+    .select("id, event_id, body, group_id")
     .eq("id", questionId)
     .maybeSingle();
 
@@ -60,9 +60,26 @@ export async function POST(request: Request) {
   }
 
   try {
+    const [{ data: groups }, { data: grouped }] = await Promise.all([
+      supabase
+        .from("question_groups")
+        .select("id, name")
+        .eq("event_id", question.event_id)
+        .eq("kind", "ai")
+        .order("created_at", { ascending: true })
+        .limit(50),
+      supabase
+        .from("questions")
+        .select("group_id, body")
+        .eq("event_id", question.event_id)
+        .not("group_id", "is", null)
+        .order("created_at", { ascending: true })
+        .limit(200),
+    ]);
+
     const [embedding, topic] = await Promise.all([
       embedQuestion(question.body),
-      topicLabel(question.body),
+      topicLabel(question.body, topicsWithExamples(groups ?? [], grouped ?? [])),
     ]);
 
     const { data: assigned, error } = await supabase

@@ -76,3 +76,26 @@ Clients subscribe to `postgres_changes` on `questions` (filtered by event) and `
 Because Realtime respects RLS, attendees never receive an UPDATE for a question that becomes
 hidden — so the organizer console also sends a `question_removed` broadcast on the event
 channel when a question is hidden or deleted. On reconnect, clients refetch to catch up.
+
+## AI question clustering (Supabase Edge Function)
+
+Similar questions are clustered by the `group-question` Edge Function
+(`supabase/functions/group-question/index.ts`). It embeds the question with OpenAI,
+then calls `assign_question_group`, which uses pgvector to attach it to the closest
+AI topic (or start a new one) and stores the similarity index. It runs with the
+caller's JWT, so database permissions still apply.
+
+Deploy with the Supabase CLI:
+
+```bash
+npx supabase login
+npx supabase link --project-ref YOUR-PROJECT-REF
+npx supabase secrets set OPENAI_API_KEY=sk-...
+npx supabase functions deploy group-question --no-verify-jwt
+```
+
+Or in the dashboard: Edge Functions → Deploy a new function → name it `group-question`,
+paste `index.ts`, turn off "Verify JWT", and add `OPENAI_API_KEY` under Edge Functions → Secrets.
+
+Until the function is deployed, the app falls back to the Next.js route
+`/api/questions/group`. Set `NEXT_PUBLIC_CLUSTERING_BACKEND=api` to always use the route.

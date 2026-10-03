@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { requestQuestionGroup } from "@/lib/group-question-client";
 import type { QuestionGroupRow, QuestionRow } from "@/lib/types";
 
@@ -24,14 +24,16 @@ export function useGroupQuestions({
   const [error, setError] = useState<string | null>(null);
   const [grouping, setGrouping] = useState(false);
   const questionsRef = useRef(questions);
-  questionsRef.current = questions;
   const attempted = useRef(new Set<string>());
   const queue = useRef<string[]>([]);
   const pumping = useRef(false);
   const patchRef = useRef(patchQuestion);
   const upsertRef = useRef(upsertGroup);
-  patchRef.current = patchQuestion;
-  upsertRef.current = upsertGroup;
+  useLayoutEffect(() => {
+    questionsRef.current = questions;
+    patchRef.current = patchQuestion;
+    upsertRef.current = upsertGroup;
+  });
 
   const pump = useCallback(async () => {
     if (pumping.current) return;
@@ -63,7 +65,7 @@ export function useGroupQuestions({
           created_at: now,
           updated_at: now,
         });
-        patchRef.current(id, { group_id: result.groupId });
+        patchRef.current(id, { group_id: result.groupId, similarity: result.similarity });
       }
     } finally {
       pumping.current = false;

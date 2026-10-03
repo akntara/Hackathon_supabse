@@ -47,6 +47,9 @@ export type QuestionRow = {
   created_at: string;
   updated_at: string;
   answered_at: string | null;
+  /** Cosine similarity to the question it matched when joining its AI topic. */
+  similarity?: number | null;
+  similar_to_id?: string | null;
 };
 
 export type QuestionVoteRow = {
@@ -158,6 +161,13 @@ export type Database = {
           created: boolean;
           similarity: number | null;
         }[];
+      };
+      apply_topic_clusters: {
+        Args: {
+          p_event_id: string;
+          p_clusters: { name: string; question_ids: string[] }[];
+        };
+        Returns: { topics: number; moved: number }[];
       };
     };
     Enums: { question_status: QuestionStatus };

@@ -1,0 +1,6 @@
+project_id = "qa-live"
+
+[functions.group-question]
+# The function verifies the caller's JWT itself with auth.getClaims, which
+# supports Supabase's asymmetric signing keys and anonymous sessions.
+verify_jwt = false

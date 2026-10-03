@@ -5,8 +5,14 @@ import { useMemo, useRef, useState } from "react";
 import { deleteEvent } from "@/app/dashboard/actions";
 import { createClient } from "@/lib/supabase/client";
 import { explainSchemaError } from "@/lib/schema-hint";
-import { buildTopicGroups } from "@/lib/topic-groups";
+import {
+  buildClusterIndex,
+  buildTopicGroups,
+  similarLiveQuestions,
+  type TopicCluster,
+} from "@/lib/topic-groups";
 import type { EventRow, QuestionGroupRow, QuestionRow, QuestionStatus } from "@/lib/types";
+import { useAutoRecluster } from "@/lib/use-auto-recluster";
 import { useGroupQuestions } from "@/lib/use-group-questions";
 import { useLiveEvent } from "@/lib/use-live-event";
 import { sortQuestions, type SortMode } from "@/lib/utils";
@@ -23,21 +29,25 @@ import {
   TrashIcon,
   UndoIcon,
 } from "./icons";
-import { QuestionCard, useNow, useOrigin } from "./question-card";
+import { EventQr, useAttendeeUrl } from "./event-qr";
+import { QuestionCard, useNow } from "./question-card";
 import { TopicBoard } from "./topic-board";
-import { Badge, Button, ButtonLink, Card, EmptyState, LiveIndicator, SegmentedControl } from "./ui";
+import { TopicMap } from "./topic-map";
+import { Badge, Button, ButtonLink, Card, EmptyState, LiveIndicator, SegmentedControl, Spinner } from "./ui";
 
 type Tab = QuestionStatus;
-type Board = "topics" | "queue";
+type Board = "map" | "topics" | "queue";
 
 export function OrganizerConsole({
   event: initialEvent,
   initialQuestions,
   initialGroups,
+  shareOrigin,
 }: {
   event: EventRow;
   initialQuestions: QuestionRow[];
   initialGroups: QuestionGroupRow[];
+  shareOrigin?: string | null;
 }) {
   const supabase = createClient();
   const now = useNow();
@@ -52,6 +62,7 @@ export function OrganizerConsole({
     upsertGroup,
     connection,
     broadcastRemoved,
+    refetch,
   } = useLiveEvent<EventRow>({
     event: initialEvent,
     initialQuestions,
@@ -66,11 +77,18 @@ export function OrganizerConsole({
     upsertGroup,
   });
 
+  const { reclustering, error: reclusterError } = useAutoRecluster({
+    eventId: event.id,
+    questions,
+    refetch,
+  });
+
   const thresholdTimer = useRef<number | null>(null);
-  const [board, setBoard] = useState<Board>("topics");
+  const [board, setBoard] = useState<Board>("map");
   const [tab, setTab] = useState<Tab>("live");
   const [sort, setSort] = useState<SortMode>("top");
   const [busy, setBusy] = useState<string | null>(null);
+  const [busyTopic, setBusyTopic] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const counts = useMemo(() => {
@@ -84,16 +102,23 @@ export function OrganizerConsole({
 
   const pinned = questions.find((q) => q.is_pinned && q.status === "live");
   const clustered = useMemo(() => buildTopicGroups(questions, groups), [questions, groups]);
+  const clusterIndex = useMemo(() => buildClusterIndex(questions, groups), [questions, groups]);
+  const pinnedSimilar = useMemo(() => similarLiveQuestions(pinned, questions), [pinned, questions]);
+  const togetherIds = useMemo(() => new Set(pinnedSimilar.map((q) => q.id)), [pinnedSimilar]);
   const threshold = Number.isFinite(Number(event.similarity_threshold))
     ? Number(event.similarity_threshold)
     : 0.82;
   const visible = useMemo(
-    () => sortQuestions(questions.filter((q) => q.status === tab), sort),
-    [questions, tab, sort],
+    () =>
+      sortQuestions(
+        questions.filter((q) => q.status === tab && !q.is_pinned && !togetherIds.has(q.id)),
+        sort,
+      ),
+    [questions, tab, sort, togetherIds],
   );
 
   const attendeePath = `/e/${event.code}`;
-  const origin = useOrigin();
+  const attendeeUrl = useAttendeeUrl(event.code, shareOrigin);
 
   async function updateQuestion(q: QuestionRow, patch: Partial<QuestionRow>) {
     setBusy(q.id);
@@ -120,6 +145,39 @@ export function OrganizerConsole({
       if (data.status === "hidden") broadcastRemoved(data.id);
     }
     setBusy(null);
+  }
+
+  async function takeUpTopic(topic: TopicCluster) {
+    const current = topic.live.find((q) => q.is_pinned);
+    if (current) return updateQuestion(current, { is_pinned: false });
+    if (topic.representative) return updateQuestion(topic.representative, { is_pinned: true });
+  }
+
+  async function answerTopic(topic: TopicCluster) {
+    const open = topic.live;
+    if (open.length === 0) return;
+    setBusyTopic(topic.id);
+    setError(null);
+    open.forEach((q) => upsert({ ...q, status: "answered", is_pinned: false }));
+
+    const { data, error } = await supabase
+      .from("questions")
+      .update({ status: "answered" })
+      .eq("event_id", event.id)
+      .in(
+        "id",
+        open.map((q) => q.id),
+      )
+      .eq("status", "live")
+      .select("*");
+
+    if (error) {
+      open.forEach((q) => upsert(q));
+      setError(error.message);
+    } else {
+      data?.forEach((row) => upsert(row));
+    }
+    setBusyTopic(null);
   }
 
   async function deleteQuestion(q: QuestionRow) {
@@ -257,18 +315,20 @@ export function OrganizerConsole({
       <div className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
         <Card className="bg-brand relative flex flex-col gap-4 overflow-hidden p-5 text-white ring-0 shadow-xl shadow-fuchsia-500/20 sm:flex-row sm:items-center sm:justify-between">
           <div aria-hidden className="bg-dots absolute inset-0" />
-          <div className="relative">
-            <p className="text-xs font-medium uppercase tracking-wide text-white/70">Share with your audience</p>
-            <p className="mt-1 font-mono text-3xl font-bold tracking-widest">
-              {event.code}
-            </p>
-            <p className="mt-0.5 truncate text-sm text-white/80">
-              {origin.replace(/^https?:\/\//, "")}
-              {attendeePath}
-            </p>
+          <div className="relative flex min-w-0 items-center gap-4">
+            <EventQr code={event.code} shareOrigin={shareOrigin} size={96} className="p-2" />
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-white/70">Scan to ask a question</p>
+              <p className="mt-1 font-mono text-3xl font-bold tracking-widest">
+                {event.code}
+              </p>
+              <p className="mt-0.5 truncate text-sm text-white/80">
+                {attendeeUrl.replace(/^https?:\/\//, "")}
+              </p>
+            </div>
           </div>
           <div className="relative">
-            <CopyButton value={attendeePath} />
+            <CopyButton value={attendeeUrl || attendeePath} />
           </div>
         </Card>
 
@@ -311,16 +371,28 @@ export function OrganizerConsole({
         ))}
       </dl>
 
-      {(error || groupError) && (
+      {(error || groupError || reclusterError) && (
         <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {explainSchemaError(error || groupError || "")}
+          {explainSchemaError(error || groupError || reclusterError || "")}
         </p>
       )}
 
-      {pinned && tab !== "live" && (
-        <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Now answering</p>
-          <QuestionCard question={pinned} now={now} actions={renderActions(pinned)} />
+      {pinned && (
+        <div className="bg-brand rounded-2xl p-1.5 shadow-xl shadow-fuchsia-500/20">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-1.5 pt-1 text-white">
+            <p className="text-xs font-semibold uppercase tracking-wide">Now answering</p>
+            {pinnedSimilar.length > 0 && (
+              <p className="text-xs text-white/85">
+                + {pinnedSimilar.length} similar question{pinnedSimilar.length === 1 ? "" : "s"} answered together
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <QuestionCard question={pinned} now={now} actions={renderActions(pinned)} />
+            {pinnedSimilar.map((q) => (
+              <QuestionCard key={q.id} question={q} now={now} answeringTogether actions={renderActions(q)} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -330,11 +402,12 @@ export function OrganizerConsole({
             value={board}
             onChange={setBoard}
             options={[
+              { value: "map", label: "Topic map" },
               { value: "topics", label: <TabLabel label="Topics" count={clustered.topics.length} /> },
               { value: "queue", label: <TabLabel label="All questions" count={questions.length} /> },
             ]}
           />
-          {board === "queue" && (
+          {board === "queue" ? (
             <SegmentedControl
               value={sort}
               onChange={setSort}
@@ -343,10 +416,25 @@ export function OrganizerConsole({
                 { value: "recent", label: "Recent" },
               ]}
             />
+          ) : (
+            reclustering && (
+              <span className="flex items-center gap-2 text-sm text-slate-500">
+                <Spinner className="size-4 text-fuchsia-600" />
+                Re-organizing topics
+              </span>
+            )
           )}
         </div>
 
-        {board === "topics" ? (
+        {board === "map" ? (
+          <TopicMap
+            topics={clustered.topics}
+            pendingCount={clustered.pending.length}
+            busyTopic={busyTopic}
+            onTakeUp={takeUpTopic}
+            onAnswerAll={answerTopic}
+          />
+        ) : board === "topics" ? (
           <div className="space-y-4">
             <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -376,7 +464,10 @@ export function OrganizerConsole({
               topics={clustered.topics}
               pending={clustered.pending}
               grouping={grouping}
+              busyTopic={busyTopic}
               onGroupPending={groupUngrouped}
+              onTakeUp={takeUpTopic}
+              onAnswerAll={answerTopic}
               renderActions={renderActions}
             />
           </div>
@@ -409,7 +500,14 @@ export function OrganizerConsole({
         ) : (
           <div className="space-y-3">
             {visible.map((q) => (
-              <QuestionCard key={q.id} question={q} now={now} actions={renderActions(q)} />
+              <QuestionCard
+                key={q.id}
+                question={q}
+                now={now}
+                cluster={clusterIndex.get(q.id)}
+                answeringTogether={togetherIds.has(q.id)}
+                actions={renderActions(q)}
+              />
             ))}
           </div>
         )}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { OrganizerConsole } from "@/components/organizer-console";
+import { getShareOrigin } from "@/lib/share-origin";
 import { getOrganizer } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Moderate event" };
@@ -18,7 +19,7 @@ export default async function EventConsolePage({ params }: PageProps<"/dashboard
 
   if (!event) notFound();
 
-  const [{ data: questions }, { data: groups }] = await Promise.all([
+  const [{ data: questions }, { data: groups }, shareOrigin] = await Promise.all([
     supabase
       .from("questions")
       .select("*")
@@ -30,6 +31,7 @@ export default async function EventConsolePage({ params }: PageProps<"/dashboard
       .select("*")
       .eq("event_id", event.id)
       .order("created_at", { ascending: true }),
+    getShareOrigin(),
   ]);
 
   return (
@@ -37,6 +39,7 @@ export default async function EventConsolePage({ params }: PageProps<"/dashboard
       event={event}
       initialQuestions={questions ?? []}
       initialGroups={groups ?? []}
+      shareOrigin={shareOrigin}
     />
   );
 }

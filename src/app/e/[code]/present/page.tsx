@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PresentView } from "@/components/present-view";
 import { getEventByCode } from "@/lib/get-event";
+import { getShareOrigin } from "@/lib/share-origin";
 
 export async function generateMetadata({ params }: PageProps<"/e/[code]/present">): Promise<Metadata> {
   const { code } = await params;
@@ -11,7 +12,7 @@ export async function generateMetadata({ params }: PageProps<"/e/[code]/present"
 
 export default async function PresentPage({ params }: PageProps<"/e/[code]/present">) {
   const { code } = await params;
-  const event = await getEventByCode(code);
+  const [event, shareOrigin] = await Promise.all([getEventByCode(code), getShareOrigin()]);
   if (!event) notFound();
-  return <PresentView event={event} />;
+  return <PresentView event={event} shareOrigin={shareOrigin} />;
 }

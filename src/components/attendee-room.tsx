@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { requestQuestionGroup } from "@/lib/group-question-client";
 import { createClient } from "@/lib/supabase/client";
 import type { PublicEvent, QuestionRow } from "@/lib/types";
+import { buildClusterIndex, similarLiveQuestions } from "@/lib/topic-groups";
 import { useJoinEvent } from "@/lib/use-join-event";
 import { useLiveEvent } from "@/lib/use-live-event";
 import { sortQuestions, type SortMode } from "@/lib/utils";
@@ -31,7 +32,7 @@ export function AttendeeRoom({ event: initialEvent }: { event: PublicEvent }) {
   const now = useNow();
   const { userId, error: authError } = useJoinEvent(initialEvent.code);
 
-  const { event, questions, loading, connection, upsert, remove } = useLiveEvent({
+  const { event, questions, groups, loading, connection, upsert, remove } = useLiveEvent({
     event: initialEvent,
     enabled: !!userId,
   });
@@ -55,6 +56,9 @@ export function AttendeeRoom({ event: initialEvent }: { event: PublicEvent }) {
   const live = useMemo(() => questions.filter((q) => q.status === "live"), [questions]);
   const answered = useMemo(() => questions.filter((q) => q.status === "answered"), [questions]);
   const pinned = live.find((q) => q.is_pinned);
+  const clusterIndex = useMemo(() => buildClusterIndex(questions, groups), [questions, groups]);
+  const together = useMemo(() => similarLiveQuestions(pinned, questions), [pinned, questions]);
+  const togetherIds = useMemo(() => new Set(together.map((q) => q.id)), [together]);
   const list = useMemo(
     () =>
       tab === "live"
@@ -135,16 +139,27 @@ export function AttendeeRoom({ event: initialEvent }: { event: PublicEvent }) {
 
         {pinned && tab === "live" && (
           <div className="bg-brand rounded-2xl p-1 shadow-xl shadow-fuchsia-500/20">
-            <p className="px-3 pb-1.5 pt-2 text-xs font-semibold uppercase tracking-wide text-white/90">
-              Now answering
-            </p>
-            <QuestionCard
-              question={pinned}
-              now={now}
-              voted={myVotes.has(pinned.id)}
-              onVote={() => toggleVote(pinned)}
-              isMine={pinned.author_id === userId}
-            />
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-1.5 pt-2 text-white/90">
+              <p className="text-xs font-semibold uppercase tracking-wide">Now answering</p>
+              {together.length > 0 && (
+                <p className="text-xs">
+                  + {together.length} similar question{together.length === 1 ? "" : "s"}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1">
+              {[pinned, ...together].map((q) => (
+                <QuestionCard
+                  key={q.id}
+                  question={q}
+                  now={now}
+                  voted={myVotes.has(q.id)}
+                  onVote={() => toggleVote(q)}
+                  isMine={q.author_id === userId}
+                  answeringTogether={q.id !== pinned.id}
+                />
+              ))}
+            </div>
           </div>
         )}
 
@@ -176,7 +191,7 @@ export function AttendeeRoom({ event: initialEvent }: { event: PublicEvent }) {
                 <Spinner className="size-6" />
               </div>
             )
-          ) : list.filter((q) => !(tab === "live" && q.is_pinned)).length === 0 ? (
+          ) : list.filter((q) => !(tab === "live" && (q.is_pinned || togetherIds.has(q.id)))).length === 0 ? (
             <EmptyState
               icon={<ChatIcon className="size-8" />}
               title={tab === "live" ? "No questions yet" : "Nothing answered yet"}
@@ -187,7 +202,7 @@ export function AttendeeRoom({ event: initialEvent }: { event: PublicEvent }) {
           ) : (
             <div className="space-y-3">
               {list
-                .filter((q) => !(tab === "live" && q.is_pinned))
+                .filter((q) => !(tab === "live" && (q.is_pinned || togetherIds.has(q.id))))
                 .map((q) => {
                   const mine = q.author_id === userId;
                   return (
@@ -198,6 +213,7 @@ export function AttendeeRoom({ event: initialEvent }: { event: PublicEvent }) {
                       voted={myVotes.has(q.id)}
                       onVote={() => toggleVote(q)}
                       isMine={mine}
+                      cluster={clusterIndex.get(q.id)}
                       actions={
                         mine && q.status === "live" ? (
                           <Button

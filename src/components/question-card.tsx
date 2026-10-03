@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { formatSimilarity, type ClusterInfo } from "@/lib/topic-groups";
 import type { QuestionRow } from "@/lib/types";
 import { cn, timeAgo } from "@/lib/utils";
 import { ArrowUpIcon, CheckIcon, PinIcon } from "./icons";
@@ -67,6 +68,8 @@ export function QuestionCard({
   onVote,
   isMine,
   actions,
+  cluster,
+  answeringTogether,
 }: {
   question: QuestionRow;
   now: number;
@@ -74,20 +77,33 @@ export function QuestionCard({
   onVote?: () => void;
   isMine?: boolean;
   actions?: ReactNode;
+  /** Highlights questions that belong to a topic asked more than once. */
+  cluster?: ClusterInfo;
+  /** Marks questions being answered together with the pinned one. */
+  answeringTogether?: boolean;
 }) {
   const answered = question.status === "answered";
   const hidden = question.status === "hidden";
+  const similar = cluster && cluster.liveCount >= 2 && question.status === "live";
+  const match = formatSimilarity(question.similarity);
 
   return (
     <article
       className={cn(
-        "animate-enter flex gap-4 rounded-2xl p-4 ring-1 backdrop-blur-xl transition hover:shadow-md",
+        "animate-enter relative flex gap-4 overflow-hidden rounded-2xl p-4 ring-1 backdrop-blur-xl transition hover:shadow-md",
         question.is_pinned
           ? "bg-white ring-2 ring-fuchsia-400 shadow-lg shadow-fuchsia-500/15"
-          : "bg-white/80 ring-violet-100 shadow-sm shadow-violet-500/5",
+          : answeringTogether
+            ? "bg-white ring-2 ring-fuchsia-300 shadow-md shadow-fuchsia-500/10"
+            : similar
+              ? `bg-white/90 ring-2 ${cluster.color.ring}`
+              : "bg-white/80 ring-violet-100 shadow-sm shadow-violet-500/5",
         (answered || hidden) && "bg-white/50",
       )}
     >
+      {similar && (
+        <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1.5", cluster.color.bar)} />
+      )}
       <VoteButton
         count={question.upvotes}
         voted={voted}
@@ -106,8 +122,25 @@ export function QuestionCard({
               <CheckIcon className="size-3" /> Answered
             </Badge>
           )}
+          {answeringTogether && !question.is_pinned && (
+            <Badge tone="indigo">Answering together</Badge>
+          )}
           {hidden && <Badge tone="rose">Hidden</Badge>}
           {isMine && <Badge>You</Badge>}
+          {similar && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset",
+                cluster.color.chip,
+              )}
+            >
+              <span className={cn("size-1.5 rounded-full", cluster.color.dot)} />
+              {cluster.name} · {cluster.liveCount} similar
+            </span>
+          )}
+          {similar && match && (
+            <span className="text-xs font-medium tabular-nums text-slate-500">{match} match</span>
+          )}
         </div>
         <p
           className={cn(

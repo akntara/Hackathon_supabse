@@ -51,6 +51,65 @@ body {
   animation: enter 220ms ease-out;
 }
 
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-bubble-in {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: bubble-in 500ms cubic-bezier(0.2, 0.8, 0.2, 1.2);
+}
+
+@keyframes pop-ring {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+.animate-pop-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pop-ring 2s ease-out infinite;
+}
+
+@keyframes pop-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+.animate-pop-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pop-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop-ring,
+  .animate-pop-pulse,
+  .animate-bubble-in,
+  .animate-float {
+    animation: none;
+  }
+}
+
 @keyframes float {
   0%,
   100% {

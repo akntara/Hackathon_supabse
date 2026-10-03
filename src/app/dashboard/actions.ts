@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { defaultSimilarityThreshold } from "@/lib/similarity-threshold";
 import { createClient, getOrganizer } from "@/lib/supabase/server";
 
 export type CreateEventState = { error?: string } | undefined;
@@ -22,7 +23,12 @@ export async function createEvent(
 
   const { data, error } = await supabase
     .from("events")
-    .insert({ title, description: description || null, organizer_id: user.id })
+    .insert({
+      title,
+      description: description || null,
+      organizer_id: user.id,
+      similarity_threshold: defaultSimilarityThreshold(),
+    })
     .select("id")
     .single();
 

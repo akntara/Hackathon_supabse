@@ -16,6 +16,17 @@ export function sortQuestions(questions: QuestionRow[], mode: SortMode) {
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
+const stamp = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+export function formatTimestamp(iso: string) {
+  return stamp.format(new Date(iso));
+}
+
 export function timeAgo(iso: string, now = Date.now()) {
   const seconds = Math.round((new Date(iso).getTime() - now) / 1000);
   const abs = Math.abs(seconds);

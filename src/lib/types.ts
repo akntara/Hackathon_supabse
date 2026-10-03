@@ -7,6 +7,8 @@ export type EventRow = {
   title: string;
   description: string | null;
   is_open: boolean;
+  /** Cosine similarity required to join an existing AI topic. */
+  similarity_threshold: number;
   created_at: string;
   updated_at: string;
 };
@@ -25,6 +27,8 @@ export type QuestionGroupRow = {
   id: string;
   event_id: string;
   name: string;
+  /** manual = organizer section; ai = embedding topic. */
+  kind: "manual" | "ai";
   position: number;
   created_at: string;
   updated_at: string;
@@ -141,6 +145,19 @@ export type Database = {
       toggle_vote: {
         Args: { p_question_id: string };
         Returns: { voted: boolean; upvotes: number }[];
+      };
+      assign_question_group: {
+        Args: {
+          p_question_id: string;
+          p_embedding: string;
+          p_topic_name: string;
+        };
+        Returns: {
+          group_id: string;
+          group_name: string;
+          created: boolean;
+          similarity: number | null;
+        }[];
       };
     };
     Enums: { question_status: QuestionStatus };

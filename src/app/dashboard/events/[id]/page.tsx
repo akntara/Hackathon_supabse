@@ -18,12 +18,25 @@ export default async function EventConsolePage({ params }: PageProps<"/dashboard
 
   if (!event) notFound();
 
-  const { data: questions } = await supabase
-    .from("questions")
-    .select("*")
-    .eq("event_id", event.id)
-    .order("created_at", { ascending: false })
-    .limit(1000);
+  const [{ data: questions }, { data: groups }] = await Promise.all([
+    supabase
+      .from("questions")
+      .select("*")
+      .eq("event_id", event.id)
+      .order("created_at", { ascending: false })
+      .limit(1000),
+    supabase
+      .from("question_groups")
+      .select("*")
+      .eq("event_id", event.id)
+      .order("created_at", { ascending: true }),
+  ]);
 
-  return <OrganizerConsole event={event} initialQuestions={questions ?? []} />;
+  return (
+    <OrganizerConsole
+      event={event}
+      initialQuestions={questions ?? []}
+      initialGroups={groups ?? []}
+    />
+  );
 }

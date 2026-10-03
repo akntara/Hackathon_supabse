@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { deleteEvent } from "@/app/dashboard/actions";
 import { createClient } from "@/lib/supabase/client";
-import type { EventRow, QuestionRow, QuestionStatus } from "@/lib/types";
+import { explainSchemaError } from "@/lib/schema-hint";
+import { buildTopicGroups } from "@/lib/topic-groups";
+import type { EventRow, QuestionGroupRow, QuestionRow, QuestionStatus } from "@/lib/types";
+import { useGroupQuestions } from "@/lib/use-group-questions";
 import { useLiveEvent } from "@/lib/use-live-event";
 import { sortQuestions, type SortMode } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
@@ -21,25 +24,50 @@ import {
   UndoIcon,
 } from "./icons";
 import { QuestionCard, useNow, useOrigin } from "./question-card";
+import { TopicBoard } from "./topic-board";
 import { Badge, Button, ButtonLink, Card, EmptyState, LiveIndicator, SegmentedControl } from "./ui";
 
 type Tab = QuestionStatus;
+type Board = "topics" | "queue";
 
 export function OrganizerConsole({
   event: initialEvent,
   initialQuestions,
+  initialGroups,
 }: {
   event: EventRow;
   initialQuestions: QuestionRow[];
+  initialGroups: QuestionGroupRow[];
 }) {
   const supabase = createClient();
   const now = useNow();
-  const { event, setEvent, questions, upsert, remove, connection, broadcastRemoved } = useLiveEvent({
+  const {
+    event,
+    setEvent,
+    questions,
+    groups,
+    upsert,
+    patchQuestion,
+    remove,
+    upsertGroup,
+    connection,
+    broadcastRemoved,
+  } = useLiveEvent<EventRow>({
     event: initialEvent,
     initialQuestions,
+    initialGroups,
     isOrganizer: true,
   });
 
+  const { error: groupError, grouping, groupUngrouped } = useGroupQuestions({
+    questions,
+    eventId: event.id,
+    patchQuestion,
+    upsertGroup,
+  });
+
+  const thresholdTimer = useRef<number | null>(null);
+  const [board, setBoard] = useState<Board>("topics");
   const [tab, setTab] = useState<Tab>("live");
   const [sort, setSort] = useState<SortMode>("top");
   const [busy, setBusy] = useState<string | null>(null);
@@ -55,6 +83,10 @@ export function OrganizerConsole({
   }, [questions]);
 
   const pinned = questions.find((q) => q.is_pinned && q.status === "live");
+  const clustered = useMemo(() => buildTopicGroups(questions, groups), [questions, groups]);
+  const threshold = Number.isFinite(Number(event.similarity_threshold))
+    ? Number(event.similarity_threshold)
+    : 0.82;
   const visible = useMemo(
     () => sortQuestions(questions.filter((q) => q.status === tab), sort),
     [questions, tab, sort],
@@ -112,6 +144,21 @@ export function OrganizerConsole({
       setEvent({ ...event, is_open: !next });
       setError(error.message);
     }
+  }
+
+  function saveThreshold(next: number) {
+    const rounded = Math.round(next * 100) / 100;
+    setEvent((current) => ({ ...current, similarity_threshold: rounded }));
+    if (thresholdTimer.current) window.clearTimeout(thresholdTimer.current);
+    thresholdTimer.current = window.setTimeout(() => {
+      void supabase
+        .from("events")
+        .update({ similarity_threshold: rounded })
+        .eq("id", event.id)
+        .then(({ error: updateError }) => {
+          if (updateError) setError(updateError.message);
+        });
+    }, 400);
   }
 
   function renderActions(q: QuestionRow) {
@@ -264,9 +311,9 @@ export function OrganizerConsole({
         ))}
       </dl>
 
-      {error && (
+      {(error || groupError) && (
         <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
+          {explainSchemaError(error || groupError || "")}
         </p>
       )}
 
@@ -280,20 +327,69 @@ export function OrganizerConsole({
       <section>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <SegmentedControl
+            value={board}
+            onChange={setBoard}
+            options={[
+              { value: "topics", label: <TabLabel label="Topics" count={clustered.topics.length} /> },
+              { value: "queue", label: <TabLabel label="All questions" count={questions.length} /> },
+            ]}
+          />
+          {board === "queue" && (
+            <SegmentedControl
+              value={sort}
+              onChange={setSort}
+              options={[
+                { value: "top", label: "Top" },
+                { value: "recent", label: "Recent" },
+              ]}
+            />
+          )}
+        </div>
+
+        {board === "topics" ? (
+          <div className="space-y-4">
+            <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-900">Similarity threshold</p>
+                <p className="text-sm text-slate-500">
+                  A new question joins an existing topic when its embedding is at least this similar.
+                  Otherwise it starts a new topic.
+                </p>
+              </div>
+              <label className="flex items-center gap-3">
+                <span className="sr-only">Similarity threshold</span>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={0.99}
+                  step={0.01}
+                  value={Math.min(0.99, Math.max(0.5, threshold))}
+                  onChange={(e) => saveThreshold(Number(e.target.value))}
+                  className="w-40 accent-fuchsia-600"
+                />
+                <span className="w-12 text-right font-mono text-sm tabular-nums text-slate-700">
+                  {threshold.toFixed(2)}
+                </span>
+              </label>
+            </Card>
+            <TopicBoard
+              topics={clustered.topics}
+              pending={clustered.pending}
+              grouping={grouping}
+              onGroupPending={groupUngrouped}
+              renderActions={renderActions}
+            />
+          </div>
+        ) : (
+          <>
+        <div className="mb-4">
+          <SegmentedControl
             value={tab}
             onChange={setTab}
             options={[
               { value: "live", label: <TabLabel label="Live" count={counts.live} /> },
               { value: "answered", label: <TabLabel label="Answered" count={counts.answered} /> },
               { value: "hidden", label: <TabLabel label="Hidden" count={counts.hidden} /> },
-            ]}
-          />
-          <SegmentedControl
-            value={sort}
-            onChange={setSort}
-            options={[
-              { value: "top", label: "Top" },
-              { value: "recent", label: "Recent" },
             ]}
           />
         </div>
@@ -316,6 +412,8 @@ export function OrganizerConsole({
               <QuestionCard key={q.id} question={q} now={now} actions={renderActions(q)} />
             ))}
           </div>
+        )}
+          </>
         )}
       </section>
 

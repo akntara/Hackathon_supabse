@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { requestQuestionGroup } from "@/lib/group-question-client";
 import { createClient } from "@/lib/supabase/client";
 import type { PublicEvent, QuestionRow } from "@/lib/types";
 import { useJoinEvent } from "@/lib/use-join-event";
@@ -264,6 +265,7 @@ function AskForm({
       return;
     }
     onAsked(data);
+    void requestQuestionGroup(data.id);
     setBody("");
     setSent(true);
     setTimeout(() => setSent(false), 2500);
